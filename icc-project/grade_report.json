@@ -6,7 +6,7 @@
     "course": "자동제어 - 2026 봄",
     "ai_usage": "Claude used to debug LQR design"
   },
-  "timestamp": "2026-06-20T16:30:28",
+  "timestamp": "2026-06-20T16:49:51",
   "quantitative": {
     "score": 57.161595689227418,
     "max": 70,
@@ -140,7 +140,7 @@
     }
   ],
   "final_auto": 57.161595689227418,
-  "ctrl_signature": "e631a3b2032ed42d6ed53f4746c317db2a6b52cf39635c1627706b10931f7c50",
+  "ctrl_signature": "466faccdf350680dc74ff135ddad2ec37ce71327d6ec0bc3b3155e02b421af14",
   "matlab_version": "25.2 (R2025b)",
   "solver_used": "ode45"
 }

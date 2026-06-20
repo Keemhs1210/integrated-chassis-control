@@ -23,7 +23,7 @@
 - **ctrl_lateral**: 2-DOF bicycle 기반 **블렌딩 gain-scheduled LQI**(적분 증강 LQR) — 정상영역은 부드러운 요추종, 한계영역(β-게이트)은 강한 슬립각 안정화 + ESC 요모멘트.
 - **ctrl_longitudinal**: **휠 슬립 회귀 ABS** — 휠을 종방향 peak 슬립(−0.12)으로 유지해 락업 방지.
 - **ctrl_vertical**: 반능동 **CDC**(상대속도 적응형 + 관측가능 모달 skyhook) — 공진 억제.
-- **ctrl_coordinator**: 요모멘트 → 4륜 차동 제동, 종방향 제동 60:40 분배, ABS 해제(음수 토크) 분배.
+- **ctrl_coordinator**: **WLS(가중최소자승) actuator allocation + 마찰원 제한** — 가상제어 `[F_x, M_z]`를 4륜 제동토크로 최적 배분, 각 휠을 `μF_z` 마찰원 내로 클리핑, ABS 해제 분배(가산점 항목).
 
 연속시간 Riccati 방정식은 **MATLAB 기본 함수(`eig`)만으로 Hamiltonian 고유분해**를 통해 자체 구현하였다(Control System Toolbox 비의존 → 재현성 보장).
 
@@ -134,13 +134,33 @@ $$ c_i = \mathrm{clip}\big(c_\text{min} + \max(c_\text{sky},\, K_v |v_\text{rel,
 
 `c_min=500, c_max=5000, K_v=12000`. (효능은 §4.3.)
 
-### 3.4 ctrl_coordinator — Actuator Allocation
+### 3.4 ctrl_coordinator — WLS Allocation + 마찰원 제한 (가산점)
 
-ESC 요모멘트를 4륜 차동 제동으로 변환한다. 차체 좌표(전방 x / 좌측 y / 상방 z, 반시계 +)에서 좌측 휠 제동은 `+M_z`(CCW), 우측은 `−M_z`를 만든다. 전/후축 분배비 `ratio_f`로:
+상위 명령(종방향력·ESC 요모멘트)을 가상제어 `v = [F_x, M_z]^T`로 두고, 4륜 제동토크 `u = [T_{FL}, T_{FR}, T_{RL}, T_{RR}]^T`로 **가중최소자승(WLS)** 배분한다. 효과행렬은 (차체 좌표 전방 x / 좌측 y / 상방 z, 반시계 +):
 
-$$ T = \frac{|M_{z,\text{axle}}|\, r_w}{(\text{track}/2)},\qquad M_z>0 \Rightarrow \text{좌측 제동},\ M_z<0 \Rightarrow \text{우측 제동} $$
+$$
+v = B u,\qquad
+B = \begin{bmatrix}
+-\tfrac{1}{r_w} & -\tfrac{1}{r_w} & -\tfrac{1}{r_w} & -\tfrac{1}{r_w}\\[4pt]
+\tfrac{t_f/2}{r_w} & -\tfrac{t_f/2}{r_w} & \tfrac{t_r/2}{r_w} & -\tfrac{t_r/2}{r_w}
+\end{bmatrix}
+$$
 
-종방향 제동은 60:40(전:후) 분배. ABS 해제분은 음수로 합산 후 `[-T_\text{max}, T_\text{max}]`로 포화시켜, runner가 시나리오 제동에 더한 뒤 `[0, T_\text{max}]`로 최종 클리핑하도록 한다.
+(좌측 휠 제동 → `+M_z`, 우측 → `−M_z`.) 댐핑된 WLS 해(toolbox 비의존):
+
+$$ u^\star = \big(B^T W_v B + W_u\big)^{-1} B^T W_v\, v $$
+
+`W_v`는 종방향/요모멘트 추종 가중, `W_u`는 액추에이터 effort 정규화(과배분 억제).
+
+**마찰원 제한.** 각 휠의 제동력은 횡력과 합쳐 `μF_z` 안에 머물러야 한다. 따라서 토크를 다음 예산으로 클리핑한다:
+
+$$ T_{\max,i} = r_w \sqrt{\max\!\big(0,\ (\mu F_{z,i})^2 - F_{y,i}^2\big)} $$
+
+`F_{z,i}`는 정적 하중 + 종방향 하중이동(명령 감속으로부터) 추정값이고, 횡력 사용 `F_{y,i}`는 ESC 요구(`|M_z|`)가 클수록 차량이 횡한계에 가깝다는 점을 이용해 `k_\text{lat}=\min(1, λ|M_z|/M_{z,\text{ref}})`로 추정한다 — `T_{\max,i}=r_w μ F_{z,i}\sqrt{1-k_\text{lat}^2}`. 이로써 **횡포화된 타이어에 제동을 과인가하지 않는다**(브레이크가 횡력을 빼앗아 오히려 불안정해지는 것을 방지).
+
+ABS 해제분(`absRelease`)은 WLS 결과에서 음수로 차감되어, runner가 시나리오 제동에 더한 뒤 `[0, T_\text{max}]`로 최종 클리핑한다.
+
+> **참고**: coordinator는 동역학 상태(`F_z, F_y, a_y`)를 직접 받지 않으므로 마찰원은 정적하중+종방향이동+ESC요구 기반의 *추정*이다. 이는 §5.3에서 논한 정보 제약의 한 예이며, 실차에서는 추정 옵저버로 보완한다.
 
 ---
 
@@ -227,7 +247,12 @@ A7(15/15)·A4(10/10)·A3(12/12). 특히 A7은 스핀아웃(30°)을 1.8°로 억
 
 - **MPC**(제약·preview 기반): A1/D1의 LTR/dev trade-off를 사전 예측으로 다소 완화할 가능성. 단 grip 한계는 못 넘고, MPC/Optimization toolbox 재현성 리스크가 있어 본 제출에서는 LQR을 택했다.
 - **고차 설계 모델**(롤 포함 3-DOF): 2-DOF bicycle은 롤 동역학을 무시하므로 LTR 직접 제어가 불가했다. 롤을 상태에 포함하면 능동 안티롤과 결합 여지가 있다.
-- **ctrl_coordinator의 WLS + 마찰원 제약**(가산점): 현재는 단순 차동 분배이며, 마찰원 인식 배분으로 한계영역 효율을 높일 수 있다.
+- **마찰원 추정 고도화**: 현재 coordinator의 마찰원은 정적하중+ESC요구 기반 *추정*(§3.4)이다. RLS/칼만 옵저버로 `F_z, F_y`를 실시간 추정하면 한계영역 배분 정확도가 오른다.
+
+### 5.5 구현한 가산점 항목
+- **ctrl_coordinator WLS allocation + 마찰원 제한**(§3.4): 가상제어 `[F_x, M_z]`의 가중최소자승 배분 + 각 휠 `μF_z` 마찰원 클리핑을 구현(toolbox 비의존).
+- **CDC 효능 입증**(§4.4): 적응형 반능동 CDC로 C2 공진 진폭 −44%, stroke 가속 RMS −48%.
+- **Gain scheduling / LPV**(§3.1): 횡방향 LQR 게인을 종속도 격자에서 재계산(A4 5→25 m/s 램프에 필수).
 
 ---
 
@@ -268,6 +293,8 @@ CTRL.LAT.afsMax=deg2rad(8); CTRL.LAT.MzMax=6000;
 CTRL.LON.kappaTarget=0.12; CTRL.LON.Kabs=7000;
 % 수직 CDC
 CTRL.VER.cMin=500; CTRL.VER.cMax=5000; CTRL.VER.skyGain=2500; CTRL.VER.Kv=12000;
-% coordinator
-CTRL.COORD.ratioF=0.5; CTRL.COORD.brakeBiasF=0.6;
+% coordinator (WLS allocation + 마찰원)
+CTRL.COORD.brakeBiasF=0.6;
+CTRL.COORD.mu=1.0; CTRL.COORD.latReserve=0.7; CTRL.COORD.MzRef=4000;
+CTRL.COORD.wFx=1; CTRL.COORD.wMz=1; CTRL.COORD.wU=1e-2;
 ```

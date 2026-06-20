@@ -85,8 +85,15 @@ CTRL.COORD.wLat  = 1.0;    % 횡방향 가중치
 CTRL.COORD.wLon  = 1.0;    % 종방향 가중치
 CTRL.COORD.wVer  = 0.5;    % 수직 가중치
 CTRL.COORD.wEff  = 0.1;    % 에너지 효율 가중치
-CTRL.COORD.ratioF    = 0.5;   % ESC 요모멘트 전/후축 분배 비율
+CTRL.COORD.ratioF    = 0.5;   % ESC 요모멘트 전/후축 분배 비율 (legacy)
 CTRL.COORD.brakeBiasF = 0.6;  % 종방향 제동 전축 배분 (60:40)
+% WLS allocation + 마찰원 제한 (가산점)
+CTRL.COORD.mu         = 1.0;  % 마찰원 마찰계수
+CTRL.COORD.latReserve = 0.7;  % ESC 요구 대비 횡방향 grip 사용 추정 비율
+CTRL.COORD.MzRef      = 4000; % k_lat 정규화 기준 요모멘트 [Nm]
+CTRL.COORD.wFx        = 1;    % WLS: 종방향력 추종 가중
+CTRL.COORD.wMz        = 1;    % WLS: 요모멘트 추종 가중
+CTRL.COORD.wU         = 1e-2; % WLS: 액추에이터 effort 정규화
 
 %% 액추에이터 한계
 LIM.MAX_STEER_ANGLE = deg2rad(540 / 15);  % [rad] 최대 로드휠 조향각 (SW 540deg / ratio 15)
