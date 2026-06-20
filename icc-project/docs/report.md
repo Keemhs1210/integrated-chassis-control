@@ -129,7 +129,7 @@ $$ \text{release}_i = K_\text{abs}\,(|\kappa_i| - \kappa_\text{target})\quad(\ka
 
 $$ c_i = \mathrm{clip}\big(c_\text{min} + \max(c_\text{sky},\, K_v |v_\text{rel},i|),\ c_\text{min},\ c_\text{max}\big) $$
 
-- $K_v |v_\text{rel}|$: 상대속도 적응항 — body-bounce 공진에서 stroke rate가 커지는 구간을 강하게 댐핑하여 공진 진폭을 억제(heave-capable).
+- $K_v |v_\text{rel}|$: 적응항 — runner가 제공하는 신호($v_\text{rel}\equiv$ `suspState.zu_dot`, 엄밀히는 언스프렁 절대 수직속도이며 stroke rate의 근사로 사용)가 커지는 body-bounce 공진 구간을 강하게 댐핑하여 공진 진폭을 억제(heave-capable).
 - $c_\text{sky}$: 관측 가능한 모달(롤/피치) sprung 속도에 대한 skyhook.
 
 $c_\text{min}=500,\ c_\text{max}=5000,\ K_v=12000$. (효능은 §4.4.)
