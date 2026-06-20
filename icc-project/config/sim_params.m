@@ -44,27 +44,49 @@ TIRE.D  = 1.0;     % Peak friction coefficient (mu_peak)
 TIRE.E  = -0.5;    % Curvature factor
 TIRE.mu_peak = 1.0;  % 최대 마찰 계수
 
-%% 제어기 파라미터 — 횡방향 (Lateral)
-CTRL.LAT.Kp     = 1.0;     % 비례 게인
-CTRL.LAT.Ki     = 0.1;     % 적분 게인
-CTRL.LAT.Kd     = 0.05;    % 미분 게인
-CTRL.LAT.intMax = 5.0;     % 적분 안티와인드업 한계 [rad]
+%% 제어기 파라미터 — 횡방향 (Lateral) : blended gain-scheduled LQI
+%   상태 z=[beta; r; xi], 입력 u=[delta_AFS; Mz]. K_nom(정상) + K_lim(한계) beta-블렌딩.
+% (a) 한계영역 K_lim — 강한 sideslip 안정화 + ESC 요모멘트 (A7 핵심)
+CTRL.LAT.q_beta  = 1500;    % Q: sideslip beta 가중 (한계 슬립 억제)
+CTRL.LAT.q_r     = 50;      % Q: yaw rate 가중
+CTRL.LAT.q_xi    = 60;      % Q: yaw-error 적분 가중
+CTRL.LAT.r_delta = 1.0;     % R: AFS 조향 입력 비용
+CTRL.LAT.r_Mz    = 2e-5;    % R: 요모멘트 입력 비용 (Nm 스케일 보정)
+% (b) 정상영역 K_nom — 부드러운 yaw 추종 (steer-only, 약한 beta 페널티)
+CTRL.LAT.q_beta_nom  = 5;     % Q_nom: beta 약하게 (driver와 충돌 방지)
+CTRL.LAT.q_r_nom     = 2;     % Q_nom: 절대 yaw 페널티 최소화 (driver 거스름 방지)
+CTRL.LAT.q_xi_nom    = 200;   % Q_nom: 적분 (정상상태 추종, A4 밴드 유지)
+CTRL.LAT.r_delta_nom = 0.4;   % R_nom: AFS 조향 비용
+% (c) 공통
+CTRL.LAT.intMax    = 5.0;            % 적분(xi) 안티와인드업 한계
+CTRL.LAT.betaTh    = deg2rad(6.0);   % beta-게이트 시작 [rad] (한계영역만)
+CTRL.LAT.betaGate  = deg2rad(4.0);   % beta-게이트 폭 (smoothstep) [rad]
+CTRL.LAT.afsMax    = deg2rad(8.0);   % AFS 보조 조향 포화 [rad]
+CTRL.LAT.MzMax     = 6000;           % 요모멘트 포화 [Nm]
+CTRL.LAT.vMin      = 2.0;            % 모델 행렬용 저속 보호 [m/s]
+CTRL.LAT.vSchedTol = 0.5;            % gain 재계산 vx 임계 [m/s] (캐싱)
 
-%% 제어기 파라미터 — 종방향 (Longitudinal)
-CTRL.LON.Kp     = 0.5;     % 비례 게인
-CTRL.LON.Ki     = 0.05;    % 적분 게인
-CTRL.LON.intMax = 2000;    % 적분 안티와인드업 한계 [Nm]
+%% 제어기 파라미터 — 종방향 (Longitudinal) : wheel-slip ABS + over-speed brake
+CTRL.LON.kappaTarget = 0.12;    % ABS 목표 슬립률 (KPI 목표 -0.12 정렬)
+CTRL.LON.Kabs        = 7000;    % ABS 해제 게인 [Nm per unit slip overshoot]
+CTRL.LON.KpV         = 800;     % over-speed 제동 게인 [N per m/s]
+CTRL.LON.vDeadband   = 0.5;     % 속도 추종 불감대 [m/s]
+CTRL.LON.mEff        = 1600;    % jerk 한계 환산용 유효 질량 [kg]
+CTRL.LON.intMax      = 2000;    % (legacy) 적분 한계 [Nm]
 
-%% 제어기 파라미터 — 수직 (Vertical / CDC)
+%% 제어기 파라미터 — 수직 (Vertical / CDC) : hybrid skyhook + groundhook
 CTRL.VER.cMin    = 500;    % [Ns/m] 최소 감쇠 계수
 CTRL.VER.cMax    = 5000;   % [Ns/m] 최대 감쇠 계수
-CTRL.VER.skyGain = 2500;   % [Ns/m] Skyhook 게인
+CTRL.VER.skyGain = 2500;   % [Ns/m] Skyhook 게인 (관측가능 모달 sprung vel)
+CTRL.VER.Kv      = 12000;  % [Ns/m per m/s] 상대속도 적응 게인 (공진 억제, heave)
 
 %% 제어기 파라미터 — 통합 조율기 (Coordinator)
 CTRL.COORD.wLat  = 1.0;    % 횡방향 가중치
 CTRL.COORD.wLon  = 1.0;    % 종방향 가중치
 CTRL.COORD.wVer  = 0.5;    % 수직 가중치
 CTRL.COORD.wEff  = 0.1;    % 에너지 효율 가중치
+CTRL.COORD.ratioF    = 0.5;   % ESC 요모멘트 전/후축 분배 비율
+CTRL.COORD.brakeBiasF = 0.6;  % 종방향 제동 전축 배분 (60:40)
 
 %% 액추에이터 한계
 LIM.MAX_STEER_ANGLE = deg2rad(540 / 15);  % [rad] 최대 로드휠 조향각 (SW 540deg / ratio 15)
@@ -134,6 +156,12 @@ switch SIM.vehicleSet
         warning('[sim_params] Unknown vehicleSet "%s", using generic.', SIM.vehicleSet);
         SIM.vehicleSet = 'generic';
 end
+
+%% 횡방향 LQI 모델 파라미터 전달 (VEH 확정 후 — ctrl_lateral 은 VEH 미수신)
+%   VEH 값을 그대로 복사 (generic/bmw5 어느 쪽이든 plant 와 동기 유지)
+CTRL.LAT.veh = struct('m', VEH.mass, 'Iz', VEH.Iz, ...
+                      'lf', VEH.lf, 'lr', VEH.lr, ...
+                      'Cf', VEH.Cf, 'Cr', VEH.Cr);
 
 fprintf('[sim_params] Parameters loaded. Plant=%s, VehicleSet=%s\n', ...
         SIM.plantModel, SIM.vehicleSet);
